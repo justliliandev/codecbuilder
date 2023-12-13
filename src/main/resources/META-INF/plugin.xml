@@ -20,7 +20,12 @@
     The default roots are the current class and the Codec, ExtraCodecs and the BuiltInRegistries classes, so you don't have to add them manually.
     A codec is also found if the Codec that is being searched is called CODEC and is present in the target class.
   ]]></description>
-
+  <change-notes><![CDATA[
+    <b>Version 1.0.1</b>
+    <ul>
+      <li>Added support for Arrays by using xmap on ListCodecs</li>
+    </ul>
+  ]]></change-notes>
   <!-- Product and plugin compatibility requirements.
        Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
   <depends>com.intellij.modules.platform</depends>

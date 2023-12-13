@@ -100,6 +100,9 @@ class GenerateCodecIntention : PsiElementBaseIntentionAction() {
             is PsiClassType -> {
                 return getCodecForClass(type, project, originCodecRoot);
             }
+            is PsiArrayType -> {
+                return getCodecForArray(type, project, originCodecRoot);
+            }
         }
         return "MissingMainTypeCodec, pls report to author with context: " + type.javaClass.canonicalName
     }
@@ -160,6 +163,19 @@ class GenerateCodecIntention : PsiElementBaseIntentionAction() {
             }
         }
         return "MissingCodec";
+    }
+
+    fun getCodecForArray(type: PsiArrayType, project: Project, originCodecRoot: PsiClass): String {
+        val arrType = type.componentType
+        val codec = getCodec(arrType, project, originCodecRoot) + ".listOf().xmap(";
+        if (arrType is PsiPrimitiveType) {
+            val hasPrimitiveStream = arrType.kind == JvmPrimitiveTypeKind.DOUBLE || arrType.kind == JvmPrimitiveTypeKind.INT || arrType.kind == JvmPrimitiveTypeKind.LONG
+            val arrTypeName = if (hasPrimitiveStream) arrType.name else "MissingPrimitiveStream"
+            return codec + "list -> list.stream().mapTo" + camelCase(arrTypeName, "") + "(val -> val).toArray(), arr -> Arrays.stream(arr).boxed().toList())"
+        } else if (arrType is PsiClassType) {
+            return codec + "list -> list.toArray(new " + arrType.name + "[0]), arr -> Arrays.stream(arr).toList())"
+        }
+        return "OnlySingleDimensionArrays"
     }
 
     fun hasValidAccess(field: JvmModifiersOwner): Boolean {
