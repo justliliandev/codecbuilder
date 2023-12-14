@@ -5,7 +5,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiClass
 import com.intellij.psi.search.GlobalSearchScope
-import java.util.List
 
 @Service
 @State(name = "codecbuilder", storages = [Storage("codecbuilder.xml")])
@@ -17,13 +16,14 @@ class InternalState : BaseState() {
 
 fun getCodecRoots(project: Project) : kotlin.collections.List<PsiClass> {
     val defaultRoots = ArrayList<String>();
-    defaultRoots.add("com.mojang.serialization.Codec")
-    defaultRoots.add("net.minecraft.util.ExtraCodecs")
-    defaultRoots.add("net.minecraft.core.registries.BuiltInRegistries")
-
+    defaultRoots.addAll(DefaultSources.values().map{src -> src.qualifiedname });
     defaultRoots.addAll(getStoredCodecRoots());
 
     return defaultRoots.mapNotNull { root -> JavaPsiFacade.getInstance(project).findClass(root, GlobalSearchScope.allScope(project)) };
+}
+
+fun getCodecRoot(project: Project, sources: DefaultSources) : PsiClass? {
+    return JavaPsiFacade.getInstance(project).findClass(sources.qualifiedname, GlobalSearchScope.allScope(project))
 }
 
 fun getStoredCodecRoots(): MutableList<String> {
@@ -46,4 +46,10 @@ fun addStoredCodecRoot(root: String) {
 
 private fun setStoredCodecRoots(roots: MutableList<String>) {
     service<DataStorage>().state.value = roots;
+}
+
+enum class DefaultSources(val qualifiedname: String) {
+    CODEC("com.mojang.serialization.Codec"),
+    EXTRACODECS("net.minecraft.util.ExtraCodecs"),
+    BUILTINREGISTRIES("net.minecraft.core.registries.BuiltInRegistries")
 }
