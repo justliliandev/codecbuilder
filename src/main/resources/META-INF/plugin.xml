@@ -15,12 +15,16 @@
        Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
   <description><![CDATA[
     Generate Codecs from the DataFixerUpper Library for all your minecraft modding needs.
-    Support for optionals, lists, enums, maps, registry entries and all other codecs it can find.
+    Support for optionals, lists, enums, maps, registry entries, arrays and all other codecs it can find.
     This plugin looks for Codecs and Registries in Codec/Registry roots. you can add classes as roots using the intentions.
     The default roots are the current class and the Codec, ExtraCodecs and the BuiltInRegistries classes, so you don't have to add them manually.
     A codec is also found if the Codec that is being searched is called CODEC and is present in the target class.
   ]]></description>
   <change-notes><![CDATA[
+    <b>Version 1.0.2</b>
+    <ul>
+      <li>Allow Codec Generation and root management on imports</li>
+    </ul>
     <b>Version 1.0.1</b>
     <ul>
       <li>Added support for Arrays by using xmap on ListCodecs</li>

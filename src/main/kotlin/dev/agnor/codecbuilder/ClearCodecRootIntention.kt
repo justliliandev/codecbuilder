@@ -12,7 +12,7 @@ class ClearCodecRootIntention : CodecRootIntention() {
         return super.getText() + "Clear"
     }
     override fun isAvailable(project: Project, editor: Editor?, element: PsiElement): Boolean {
-        return element.parentOfType<PsiClass>() != null
+        return findClass(project, element) != null
     }
 
     override fun invoke(project: Project, editor: Editor?, element: PsiElement) {

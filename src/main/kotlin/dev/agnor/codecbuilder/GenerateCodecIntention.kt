@@ -1,6 +1,5 @@
 package dev.agnor.codecbuilder
 
-import com.intellij.codeInsight.intention.PsiElementBaseIntentionAction
 import com.intellij.lang.jvm.JvmModifier
 import com.intellij.lang.jvm.JvmModifiersOwner
 import com.intellij.lang.jvm.types.JvmPrimitiveTypeKind
@@ -11,74 +10,83 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.*
 import com.intellij.psi.impl.source.PsiImmediateClassType
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.util.childrenOfType
 import com.intellij.psi.util.parentOfType
 import java.util.*
 import kotlin.collections.ArrayList
 
-class GenerateCodecIntention : PsiElementBaseIntentionAction() {
+class GenerateCodecIntention : CodecRootIntention() {
 
-
-    override fun startInWriteAction() = false
     override fun getText() = "Generate Codec for type"
-    override fun getFamilyName() = "CodecBuilder"
 
     override fun isAvailable(project: Project, editor: Editor?, element: PsiElement): Boolean {
-        val parentOfType = element.parentOfType<PsiClass>()
-        return parentOfType != null// && isValidRecordMember(parentOfType)
+        return findClass(project, element) != null
     }
 
 
     override fun invoke(project: Project, editor: Editor?, element: PsiElement) {
-        val parentOfType = element.parentOfType<PsiClass>() ?: return
-        val members = getMembers(parentOfType, project)
-        var str = "public static final Codec<" + parentOfType.name + "> CODEC = RecordCodecBuilder.create(instance -> instance.group(\n"
+        val codecClass = findClass(project, element) ?: return
+        val file = element.parentOfType<PsiFile>();
+        val fileClazz :PsiClass?
+        if (file == null) {
+            println("null")
+            return
+        } else {
+            if (!file.name.endsWith(".java"))
+                return
+            fileClazz = file.childrenOfType<PsiClass>()
+                    .firstOrNull{ cls -> cls.name == file.name.substringBeforeLast(".java")}
+        }
+        fileClazz?: return
+        val members = getMembers(codecClass, fileClazz, project)
+        var str = "public static final Codec<" + codecClass.name + "> CODEC = RecordCodecBuilder.create(instance -> instance.group(\n"
         for (member in members) {
             val separator = if (members[members.size - 1] == member) "" else ","
             val fieldOf = if (member.codec.endsWith(".optional", false)) "FieldOf" else ".fieldOf"
             str += member.codec + "$fieldOf(\"" + member.name + "\").forGetter(" + member.methodName + ")" + separator + "\n"
         }
-        str += ").apply(instance, " + parentOfType.name + "::new));";
+        str += ").apply(instance, " + codecClass.name + "::new));";
         val selection = java.awt.datatransfer.StringSelection(str);
         java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, selection)
         NotificationGroupManager.getInstance().getNotificationGroup("CodecConstructionComplete").createNotification("Codec copied to clipboard", NotificationType.INFORMATION).notify(project);
     }
-    fun getMembers(clazz: PsiClass, project: Project): List<Member> {
-        if (clazz.isRecord) {
-            return clazz.fields
+    fun getMembers(codecClass: PsiClass, source: PsiClass, project: Project): List<Member> {
+        if (codecClass.isRecord) {
+            return codecClass.fields
                     .filter { field -> !field.hasModifier(JvmModifier.STATIC) }
-                    .map { field -> Member(field.name, clazz.name + "::" + field.name, getCodec(field.type, project, clazz)) }
+                    .map { field -> Member(field.name, codecClass.name + "::" + field.name, getCodec(field.type, project, source)) }
         }
-        val isSingleConstructor = clazz.constructors.size == 1
-        constructor@ for (method in clazz.constructors) {
+        val isSingleConstructor = codecClass.constructors.size == 1
+        constructor@ for (method in codecClass.constructors) {
             val members = ArrayList<Member>();
             for (parameter in method.parameterList.parameters) {
                 val name = parameter.name
                 var memberGetter: String? = null
                 val parameterType = parameter.type
-                for (getter in clazz.findMethodsByName(name)) {
+                for (getter in codecClass.findMethodsByName(name)) {
                     val returnType = getter.returnType ?: continue
                     if (parameterType == returnType && getter.parameters.isEmpty() && !getter.hasModifier(JvmModifier.STATIC) && getter.hasModifier(JvmModifier.PUBLIC)) {
-                        memberGetter = clazz.name + "::" + getter.name
+                        memberGetter = codecClass.name + "::" + getter.name
                         break;
                     }
                 }
                 val prefix = if (parameterType is PsiPrimitiveType && parameterType.kind == JvmPrimitiveTypeKind.BOOLEAN) "is" else "get"
                 val methodName = camelCase(name, prefix)
-                for (getter in clazz.findMethodsByName(methodName)) {
+                for (getter in codecClass.findMethodsByName(methodName)) {
                     val returnType = getter.returnType ?: continue
                     if (parameterType == returnType && getter.parameters.isEmpty() && !getter.hasModifier(JvmModifier.STATIC) && getter.hasModifier(JvmModifier.PUBLIC)) {
-                        memberGetter = clazz.name + "::" + getter.name
+                        memberGetter = codecClass.name + "::" + getter.name
                         break
                     }
                 }
                 if (memberGetter == null) {
                     if (isSingleConstructor) {
-                        memberGetter = clazz.name + "::missingGetter";
+                        memberGetter = codecClass.name + "::missingGetter";
                     } else {
                         continue@constructor
                     }
                 }
-                val codec = getCodec(parameterType, project, clazz)
+                val codec = getCodec(parameterType, project, codecClass)
                 if (codec.contains("MissingCodec") && !isSingleConstructor)
                     continue@constructor
                 members.add(Member(name, memberGetter, codec))

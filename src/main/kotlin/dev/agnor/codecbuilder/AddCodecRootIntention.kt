@@ -2,9 +2,7 @@ package dev.agnor.codecbuilder
 
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiElement
-import com.intellij.psi.util.parentOfType
 
 class AddCodecRootIntention : CodecRootIntention() {
 
@@ -12,12 +10,11 @@ class AddCodecRootIntention : CodecRootIntention() {
         return super.getText() + "Add"
     }
     override fun isAvailable(project: Project, editor: Editor?, element: PsiElement): Boolean {
-        val clazz = element.parentOfType<PsiClass>() ?: return false
-        return !getCodecRoots(project).contains(clazz);
+        return !getCodecRoots(project).contains(findClass(project, element))
     }
 
     override fun invoke(project: Project, editor: Editor?, element: PsiElement) {
-        val clazz = element.parentOfType<PsiClass>()?.qualifiedName ?: return
+        val clazz = findClass(project, element)?.qualifiedName ?: return
         addStoredCodecRoot(clazz);
     }
 }
