@@ -63,6 +63,10 @@
       <className>dev.agnor.codecbuilder.GenerateCodecImportIntention</className>
       <category>CodecBuilder</category>
     </intentionAction>
+    <intentionAction>
+      <className>dev.agnor.codecbuilder.GenerateCodecIntentionNew</className>
+      <category>CodecBuilder</category>
+    </intentionAction>
     <applicationService serviceImplementation="dev.agnor.codecbuilder.DataStorage"/>
     <notificationGroup id="CodecConstructionComplete" displayType="BALLOON"/>
   </extensions>
