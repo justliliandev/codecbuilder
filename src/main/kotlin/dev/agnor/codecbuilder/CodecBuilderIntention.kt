@@ -1,7 +1,6 @@
 package dev.agnor.codecbuilder
 
 import com.intellij.codeInsight.intention.PsiElementBaseIntentionAction
-import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiClass
@@ -10,7 +9,7 @@ import com.intellij.psi.PsiImportStatement
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.parentOfType
 
-abstract class CodecRootIntention : PsiElementBaseIntentionAction() {
+abstract class CodecBuilderIntention : PsiElementBaseIntentionAction() {
 
     override fun getText() = "Registry-/Codec-Root: "
     override fun getFamilyName() = "CodecBuilder"

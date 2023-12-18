@@ -1,12 +1,12 @@
-package dev.agnor.codecbuilder
+package dev.agnor.codecbuilder.roots
 
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiElement
-import com.intellij.psi.util.parentOfType
+import dev.agnor.codecbuilder.CodecBuilderIntention
+import dev.agnor.codecbuilder.clearStoredCodecRoots
 
-class ClearCodecRootIntention : CodecRootIntention() {
+class ClearCodecRootIntention : CodecBuilderIntention() {
 
     override fun getText(): String {
         return super.getText() + "Clear"

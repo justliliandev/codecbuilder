@@ -21,6 +21,14 @@
     A codec is also found if the Codec that is being searched is called CODEC and is present in the target class.
   ]]></description>
   <change-notes><![CDATA[
+    <b>Version 1.0.4</b>
+    <ul>
+      <li>rewrite to use psi for insertion - by minecraftschurli, thanks a lot</li>
+      <li>generation looks for accessible fields to create a getter for a codec</li>
+      <li>improved warning versions</li>
+      <li>increased max build version</li>
+
+    </ul>
     <b>Version 1.0.3</b>
     <ul>
       <li>Added Codec Generation with import intent, which adds the imports to the currently selected file</li>
@@ -44,27 +52,19 @@
   <extensions defaultExtensionNs="com.intellij">
 
     <intentionAction>
-      <className>dev.agnor.codecbuilder.AddCodecRootIntention</className>
+      <className>dev.agnor.codecbuilder.roots.AddCodecRootIntention</className>
       <category>CodecBuilder</category>
     </intentionAction>
     <intentionAction>
-      <className>dev.agnor.codecbuilder.RemoveCodecRootIntention</className>
+      <className>dev.agnor.codecbuilder.roots.RemoveCodecRootIntention</className>
       <category>CodecBuilder</category>
     </intentionAction>
     <intentionAction>
-      <className>dev.agnor.codecbuilder.ClearCodecRootIntention</className>
+      <className>dev.agnor.codecbuilder.roots.ClearCodecRootIntention</className>
       <category>CodecBuilder</category>
     </intentionAction>
     <intentionAction>
       <className>dev.agnor.codecbuilder.GenerateCodecIntention</className>
-      <category>CodecBuilder</category>
-    </intentionAction>
-    <intentionAction>
-      <className>dev.agnor.codecbuilder.GenerateCodecImportIntention</className>
-      <category>CodecBuilder</category>
-    </intentionAction>
-    <intentionAction>
-      <className>dev.agnor.codecbuilder.GenerateCodecIntentionNew</className>
       <category>CodecBuilder</category>
     </intentionAction>
     <applicationService serviceImplementation="dev.agnor.codecbuilder.DataStorage"/>
