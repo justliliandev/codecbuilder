@@ -1,7 +1,6 @@
 package dev.agnor.codecbuilder
 
 import com.intellij.codeInsight.generation.GenerateMembersUtil
-import com.intellij.codeInspection.isInheritorOf
 import com.intellij.lang.jvm.JvmModifier
 import com.intellij.lang.jvm.types.JvmPrimitiveTypeKind
 import com.intellij.notification.NotificationGroupManager
@@ -164,11 +163,11 @@ class GenerateCodecIntention : CodecBuilderIntention() {
         return field
     }
 
-    private fun getCodec(project: Project, type: PsiType, targetClass: PsiClass, source: PsiClass): String {
+    private fun getCodec(project: Project, type: PsiType, source: PsiClass): String {
         val codec = when (type) {
             is PsiPrimitiveType -> getPrimitiveCodec(type)
-            is PsiClassType -> getObjectCodec(project, type, targetClass, source)
-            is PsiArrayType -> getArrayCodec(project, type, targetClass, source)
+            is PsiClassType -> getObjectCodec(project, type, source)
+            is PsiArrayType -> getArrayCodec(project, type, source)
             else -> UNKNOWN_CODEC
         }
         return codec
@@ -190,108 +189,103 @@ class GenerateCodecIntention : CodecBuilderIntention() {
         else -> UNKNOWN_PRIMITIVE_CODEC
     }
 
-    private fun getObjectCodec(project: Project, type: PsiClassType, targetClass: PsiClass, source: PsiClass): String {
+    private fun getObjectCodec(project: Project, type: PsiClassType, source: PsiClass): String {
         val clazz = type.resolve() ?: return UNKNOWN_CLASS_CODEC
         when (clazz.qualifiedName) {
             null -> return UNKNOWN_CLASS_CODEC
             "java.lang.String" -> return "com.mojang.serialization.Codec.STRING"
-            "java.util.Optional" -> return getCodec(project, type.parameters.first(), targetClass, source) + OPTIONAL_MARKER
+            "java.util.Optional" -> return getCodec(project, type.parameters.first(), source) + OPTIONAL_MARKER
             "java.util.OptionalInt" -> return getPrimitiveCodec(PsiType.INT) + OPTIONAL_MARKER
             "java.util.OptionalLong" -> return getPrimitiveCodec(PsiType.LONG) + OPTIONAL_MARKER
             "java.util.OptionalDouble" -> return getPrimitiveCodec(PsiType.DOUBLE) + OPTIONAL_MARKER
-            "com.mojang.datafixers.util.Pair" -> return getPairCodec(type, project, targetClass, source)
-            "com.mojang.datafixers.util.Either" -> return getEitherCodec(type, project, targetClass, source)
+            "com.mojang.datafixers.util.Pair" -> return getPairCodec(type, project, source)
+            "com.mojang.datafixers.util.Either" -> return getEitherCodec(type, project, source)
             "java.util.List" -> {
                 val listType = type.parameters.first()
                 if (listType is PsiClassType) {
                     val inner = PsiUtil.resolveClassInClassTypeOnly(listType)
                     if (inner?.qualifiedName == "com.mojang.datafixers.util.Pair") {
                         val (first, second) = listType.parameters
-                        return "com.mojang.serialization.Codec.compoundList(${getCodec(project, first, targetClass, source)}, ${getCodec(project, second, targetClass, source)})"
+                        return "com.mojang.serialization.Codec.compoundList(${getCodec(project, first, source)}, ${getCodec(project, second, source)})"
                     }
                 }
-                return "${getCodec(project, listType, targetClass, source)}.listOf()"
+                return "${getCodec(project, listType, source)}.listOf()"
             }
 
-            "java.util.Map" -> return getMapCodec(type, project, targetClass, source)
-            "java.util.Set" -> return getSetCodec(type, project, targetClass, source)
-            else -> return getObjectCodecFallback(clazz, project, source, type, targetClass)
+            "java.util.Map" -> return getMapCodec(type, project, source)
+            "java.util.Set" -> return getSetCodec(type, project, source)
+            else -> return getObjectCodecFallback(clazz, type, project, source)
 
         }
     }
 
-    private fun getObjectCodecFallback(clazz: PsiClass, project: Project, source: PsiClass, type: PsiClassType, targetClass: PsiClass): String {
+    private fun getObjectCodecFallback(targetClass: PsiClass, targetType: PsiClassType, project: Project, source: PsiClass): String {
 
-        val primitive = JvmPrimitiveTypeKind.getKindByFqn(clazz.qualifiedName)
+        val primitive = JvmPrimitiveTypeKind.getKindByFqn(targetClass.qualifiedName)
         if (primitive != null)
             return getPrimitiveCodec(primitive)
 
         val scope = GlobalSearchScope.allScope(project)
         val javaPsiFacade = JavaPsiFacade.getInstance(project)
-        val codecSources = getCodecSources(clazz, source)
+        val codecSources = getCodecSources(targetClass, source)
         for (codecSource in codecSources) {
             val from = javaPsiFacade.findClass(codecSource.fqn, scope) ?: continue
-            val codecs = getStaticCodecs(from, targetClass, type).sortedBy { it.name in codecSource.preferred }
+            val codecs = getStaticCodecs(from, targetClass, targetType).sortedBy { it.name in codecSource.preferred }
             if (codecs.isEmpty())
                 continue
             return "${from.qualifiedName}.${codecs.first().name}"
         }
-        if (clazz.isEnum)
-            return getEnumCodec(type, clazz, targetClass)
+        if (targetClass.isEnum)
+            return getEnumCodec(targetType)
 
-        val isHolder = clazz.qualifiedName == "net.minecraft.core.Holder"
-        val registryCodec = getRegistryCodec(project, targetClass, if (isHolder) type.parameters.first() else type, isHolder)
+        val isHolder = targetClass.qualifiedName == "net.minecraft.core.Holder"
+        val registryCodec = getRegistryCodec(project, targetClass, if (isHolder) targetType.parameters.first() else targetType, isHolder)
         if (registryCodec != null)
             return registryCodec
         return UNKNOWN_CLASS_CODEC
     }
 
-    private fun getPairCodec(type: PsiClassType, project: Project, targetClass: PsiClass, source: PsiClass): String {
+    private fun getPairCodec(type: PsiClassType, project: Project, source: PsiClass): String {
         val (first, second) = type.parameters
-        val firstCodec = getCodec(project, first, targetClass, source)
-        val secondCodec = getCodec(project, second, targetClass, source)
+        val firstCodec = getCodec(project, first, source)
+        val secondCodec = getCodec(project, second, source)
         return "com.mojang.serialization.Codec.pair($firstCodec, $secondCodec)"
     }
 
-    private fun getEitherCodec(type: PsiClassType, project: Project, targetClass: PsiClass, source: PsiClass): String {
+    private fun getEitherCodec(type: PsiClassType, project: Project, source: PsiClass): String {
         val (first, second) = type.parameters
-        val firstCodec = getCodec(project, first, targetClass, source)
-        val secondCodec = getCodec(project, second, targetClass, source)
+        val firstCodec = getCodec(project, first, source)
+        val secondCodec = getCodec(project, second, source)
         return "com.mojang.serialization.Codec.either($firstCodec, $secondCodec)"
     }
 
-    private fun getMapCodec(type: PsiClassType, project: Project, targetClass: PsiClass, source: PsiClass): String {
+    private fun getMapCodec(type: PsiClassType, project: Project, source: PsiClass): String {
         val (first, second) = type.parameters
-        val firstCodec = getCodec(project, first, targetClass, source)
-        val secondCodec = getCodec(project, second, targetClass, source)
+        val firstCodec = getCodec(project, first, source)
+        val secondCodec = getCodec(project, second, source)
         return "com.mojang.serialization.Codec.unboundedMap($firstCodec, $secondCodec)"
     }
 
-    private fun getSetCodec(type: PsiClassType, project: Project, targetClass: PsiClass, source: PsiClass): String {
+    private fun getSetCodec(type: PsiClassType, project: Project, source: PsiClass): String {
         val setType = type.parameters.first()
-        return "${getCodec(project, setType, targetClass, source)}.listOf().xmap(java.util.Set::copyOf, java.util.List::copyOf)"
+        return "${getCodec(project, setType, source)}.listOf().xmap(java.util.Set::copyOf, java.util.List::copyOf)"
     }
 
-    private fun getEnumCodec(type: PsiClassType, clazz: PsiClass, targetClass: PsiClass): String {
-        if (type.isInheritorOf("net.minecraft.util.StringRepresentable")) {
-            val codec = getStaticCodecs(clazz, targetClass, type).firstOrNull()
-            if (codec != null) return "${clazz.name}.${codec.name}"
-            return "net.minecraft.util.StringRepresentable.fromEnum(${clazz.qualifiedName}::values)"
-        }
-        return "net.minecraft.util.ExtraCodecs.orCompressed(net.minecraft.util.ExtraCodecs.stringResolverCodec(${clazz.qualifiedName}::name, ${clazz.qualifiedName}::valueOf), net.minecraft.util.ExtraCodecs.idResolverCodec(${clazz.qualifiedName}::ordinal, i -> i >= 0 && i < ${clazz.qualifiedName}.values().length ? ${clazz.qualifiedName}.values()[i] : null, -1))"
+    private fun getEnumCodec(type: PsiClassType): String {
+        return "com.mojang.serialization.Codec.STRING.xmap(str -> Objects.requireNonNull(" + type.name + ".valueOf(str)), " + type.name + "::name)"
     }
 
     @Suppress("UnstableApiUsage")
-    private fun getArrayCodec(project: Project, type: PsiArrayType, targetClass: PsiClass, source: PsiClass): String {
+    private fun getArrayCodec(project: Project, type: PsiArrayType, source: PsiClass): String {
         when (val componentType = type.componentType) {
             is PsiPrimitiveType -> {
                 if (componentType.kind !in setOf(JvmPrimitiveTypeKind.DOUBLE, JvmPrimitiveTypeKind.INT, JvmPrimitiveTypeKind.LONG)) {
                     return MISSING_PRIMITIVE_STREAM_CODEC
                 }
-                return "${getCodec(project, componentType, targetClass, source)}.listOf().xmap(list -> list.stream().mapTo${componentType.name.capitalize()}(val -> val).toArray(), arr -> java.util.Arrays.stream(arr).boxed().toList())"
+                return "${getCodec(project, componentType, source)}.listOf().xmap(list -> list.stream().mapTo${componentType.name.capitalize()}(val -> val).toArray(), arr -> java.util.Arrays.stream(arr).boxed().toList())"
             }
 
-            is PsiClassType -> return "${getCodec(project, componentType, targetClass, source)}.listOf().xmap(list -> list.toArray(new ${componentType.name}[0]), arr -> java.util.Arrays.stream(arr).toList())"
+            is PsiClassType -> return "${getCodec(project, componentType, source)}.listOf().xmap(list -> list.toArray(new ${componentType.name}[0]), arr -> java.util.Arrays.stream(arr).toList())"
             else -> return MULTI_DIMENSIONAL_ARRAY_CODEC
         }
     }
@@ -326,16 +320,14 @@ class GenerateCodecIntention : CodecBuilderIntention() {
         return codecType == type1
     }
 
-    private fun isRegistryOf(type: PsiType, type1: PsiType): Boolean {
-        if (type !is PsiClassType) return false
-        if (!type.isInheritorOf("net.minecraft.core.Registry")) return false
-        val regType = type.parameters.firstOrNull() ?: return false
-        return regType == type1
+    private fun isRegistryOf(potentialRegistry: PsiType, targetRegistryType: PsiType): Boolean {
+        val registryType = getRegistryType(potentialRegistry)
+        return registryType == targetRegistryType
     }
 
     private fun PsiRecordComponent.toMember(project: Project, clazz: PsiClass, source: PsiClass): Member {
         val getter = "${clazz.qualifiedName}::$name"
-        val codec = getCodec(project, type, clazz, source)
+        val codec = getCodec(project, type, source)
         val optional = codec.endsWith(OPTIONAL_MARKER)
         if (codec.indexOf(OPTIONAL_MARKER) != codec.lastIndexOf(OPTIONAL_MARKER)) {
             throw IncorrectOperationException("Optional in unexpected place")
@@ -345,7 +337,7 @@ class GenerateCodecIntention : CodecBuilderIntention() {
     }
 
     private fun PsiParameter.toMember(project: Project, getter: PsiMethod?, fieldForGetter: PsiField?, clazz: PsiClass, source: PsiClass): Member {
-        val codec = getCodec(project, type, clazz, source)
+        val codec = getCodec(project, type, source)
         val optional = codec.endsWith(OPTIONAL_MARKER)
         if (codec.indexOf(OPTIONAL_MARKER) != codec.lastIndexOf(OPTIONAL_MARKER)) {
             throw IncorrectOperationException("Optional in unexpected place")
@@ -365,5 +357,22 @@ class GenerateCodecIntention : CodecBuilderIntention() {
         return this.replaceFirstChar {
             it.uppercaseChar()
         }
+    }
+
+    private fun getRegistryType(type: PsiType): PsiType? {
+        return getGenericType(type, "net.minecraft.core.Registry")
+    }
+    private fun getGenericType(type: PsiType, targetType: String): PsiType? {
+        if (type is PsiClassType) {
+            val resolvedType = type.resolve()?: return null
+            if (resolvedType.qualifiedName == targetType)
+                return type.parameters[0]
+        }
+        for (superType in type.superTypes) {
+            val codecType = getGenericType(superType, targetType);
+            if (codecType != null)
+                return codecType
+        }
+        return null
     }
 }
