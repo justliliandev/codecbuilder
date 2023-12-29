@@ -105,6 +105,9 @@ class GenerateCodecIntention : CodecBuilderIntention() {
             candidates.add(target.recordComponents.map { it.toMember(project, target, source) })
         }
         candidates.addAll(constructorMembers)
+        if (candidates.isEmpty()) {
+            return generateUnitCodec(project, target);
+        }
         candidates.sortBy { it.size } // sort this to prefer constructors with less parameters if they are missing the same amount of codecs/getters or to find the shorter valid codec
         val candidate = candidates.minByOrNull { candidate ->
             candidate.sumOf { member -> ERROR_CODECS.count { member.codec.contains(it) } + (if (member.getter == MISSING_GETTER) 1 else 0) }
