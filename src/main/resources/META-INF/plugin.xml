@@ -21,13 +21,16 @@
     A codec is also found if the Codec that is being searched is called CODEC and is present in the target class.
   ]]></description>
   <change-notes><![CDATA[
+    <b>Version 1.0.5</b>
+    <ul>
+      <li>find default constructor if no constructor is found</li>
+    </ul>
     <b>Version 1.0.4</b>
     <ul>
       <li>rewrite to use psi for insertion - by minecraftschurli, thanks a lot</li>
       <li>generation looks for accessible fields to create a getter for a codec</li>
       <li>improved warning versions</li>
       <li>increased max build version</li>
-
     </ul>
     <b>Version 1.0.3</b>
     <ul>
