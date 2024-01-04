@@ -21,6 +21,10 @@
     A codec is also found if the Codec that is being searched is called CODEC and is present in the target class.
   ]]></description>
   <change-notes><![CDATA[
+    <b>Version 1.0.6</b>
+    <ul>
+      <li>added rudimentary kotlin support</li>
+    </ul>
     <b>Version 1.0.5</b>
     <ul>
       <li>find default constructor if no constructor is found</li>
@@ -49,6 +53,7 @@
        Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
   <depends>com.intellij.modules.platform</depends>
   <depends>com.intellij.modules.java</depends>
+  <depends>org.jetbrains.kotlin</depends>
 
   <!-- Extension points defined by the plugin.
        Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->

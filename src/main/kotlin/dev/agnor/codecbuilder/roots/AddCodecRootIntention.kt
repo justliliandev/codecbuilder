@@ -13,7 +13,8 @@ class AddCodecRootIntention : CodecBuilderIntention() {
         return super.getText() + "Add"
     }
     override fun isAvailable(project: Project, editor: Editor?, element: PsiElement): Boolean {
-        return !getStoredCodecRoots().contains(findClass(project, element)?.qualifiedName)
+        val qfn = findClass(project, element)?.qualifiedName?: return false
+        return !getStoredCodecRoots().contains(qfn)
     }
 
     override fun invoke(project: Project, editor: Editor?, element: PsiElement) {

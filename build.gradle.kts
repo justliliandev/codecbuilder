@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "dev.agnor"
-version = "1.0.5"
+version = "1.0.6"
 
 repositories {
   mavenCentral()
@@ -48,7 +48,6 @@ tasks {
 }
 
 intellij {
-  plugins.addAll(
-          "java"
+  plugins.addAll("java","Kotlin"
   )
 }

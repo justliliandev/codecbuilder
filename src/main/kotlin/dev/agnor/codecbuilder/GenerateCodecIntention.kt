@@ -1,31 +1,32 @@
 package dev.agnor.codecbuilder
 
-import com.intellij.codeInsight.generation.GenerateMembersUtil
 import com.intellij.lang.jvm.JvmModifier
 import com.intellij.lang.jvm.types.JvmPrimitiveTypeKind
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.psi.*
-import com.intellij.psi.codeStyle.JavaCodeStyleManager
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.PsiTypesUtil
 import com.intellij.psi.util.PsiUtil
-import com.intellij.psi.util.childrenOfType
 import com.intellij.psi.util.parentOfType
 import com.intellij.util.IncorrectOperationException
+import dev.agnor.codecbuilder.lang.SourceProcessor
+import dev.agnor.codecbuilder.preprocessor.allMethods
+import dev.agnor.codecbuilder.preprocessor.constructors
+import dev.agnor.codecbuilder.psiwrapper.Method
+import dev.agnor.codecbuilder.psiwrapper.Parameter
 import kotlin.streams.toList
 
-private const val OPTIONAL_MARKER = '§'
+const val OPTIONAL_MARKER = '§'
 private const val UNKNOWN_CODEC = "UNKNOWN_CODEC"
 private const val UNKNOWN_PRIMITIVE_CODEC = "UNKNOWN_PRIMITIVE_CODEC"
 private const val UNKNOWN_CLASS_CODEC = "UNKNOWN_CLASS_CODEC"
 private const val MISSING_PRIMITIVE_STREAM_CODEC = "MISSING_PRIMITIVE_STREAM_CODEC"
 private const val MULTI_DIMENSIONAL_ARRAY_CODEC = "MULTI_DIMENSIONAL_ARRAY_CODEC"
-private const val MISSING_GETTER = "MISSING_GETTER"
-private val ERROR_CODECS = setOf(
+private const val MISSING_GETTER = "(MISSING_GETTER)"
+public val ERROR_CODECS = setOf(
     UNKNOWN_CODEC,
     UNKNOWN_PRIMITIVE_CODEC,
     UNKNOWN_CLASS_CODEC,
@@ -37,12 +38,6 @@ private val ERROR_CODECS = setOf(
 class GenerateCodecIntention : CodecBuilderIntention() {
     private class CodecSource(val fqn: String, val preferred: Set<String>)
 
-    private class Member(val codec: String, val name: String, val optional: Boolean, val default: String?, val getter: String) {
-        override fun toString(): String {
-            return "$codec.${if (optional || default != null) "optionalFieldOf" else "fieldOf"}(\"$name\"${if (default != null) ", $default" else ""}).forGetter($getter)"
-        }
-    }
-
     override fun getText() = "Generate Codec for type"
 
     override fun isAvailable(project: Project, editor: Editor?, element: PsiElement): Boolean {
@@ -51,23 +46,22 @@ class GenerateCodecIntention : CodecBuilderIntention() {
 
     override fun invoke(project: Project, editor: Editor?, element: PsiElement) {
         val clazz = findClass(project, element)!!
-        val file = element.parentOfType<PsiJavaFile>()!!
-        val fileClazz = file.childrenOfType<PsiClass>()
-                    .firstOrNull{ cls -> cls.name == file.name.substringBeforeLast(".java")}
+        val file = element.parentOfType<PsiFile>()!!
+        val fileClazz = SourceProcessor.sourceProcessors
+            .flatMap { it.findClassesInBody(file, project) }
+            .firstOrNull{cls -> cls.first.name == file.name.split(".")[0]}
         if (fileClazz == null) {
             notify("Missing Class of same name in current file", NotificationType.WARNING, project)
             return
         }
-        val field = generateForClass(project, clazz, fileClazz)
-        val success = field.initializer?.text?.let { text -> ERROR_CODECS.none { text.contains(it) } } ?: false
-        if (success) {
+        val expression = generateForClass(project, clazz, fileClazz.first, fileClazz.second)
+
+        fileClazz.second.write(fileClazz.first, project, expression, file)
+
+        if (expression.let { text -> ERROR_CODECS.none { text.contains(it) } }) {
             notify("Successfully generated codec", NotificationType.INFORMATION, project)
         } else {
             notify("Generated codec with some issues", NotificationType.WARNING, project)
-        }
-        WriteCommandAction.writeCommandAction(project, file).run<RuntimeException> {
-            JavaCodeStyleManager.getInstance(project).shortenClassReferences(field.initializer!!)
-            GenerateMembersUtil.insert(fileClazz, field, fileClazz.lBrace, false)
         }
     }
 
@@ -79,7 +73,7 @@ class GenerateCodecIntention : CodecBuilderIntention() {
     private fun getCodecSources(clazz: PsiClass, source: PsiClass): List<CodecSource> {
         val sources = mutableListOf<CodecSource>()
         sources.add(CodecSource(clazz.qualifiedName!!, setOf("CODEC")))
-        sources.add(CodecSource("com.mojang.serialization.Codec", setOf()))
+        sources.add(CodecSource(CODEC_FQN, setOf()))
         sources.add(CodecSource(source.qualifiedName!!, setOf()))
         sources.add(CodecSource("net.minecraft.util.ExtraCodecs", setOf("JSON", "QUATERNIONF")))
         sources.addAll(getStoredCodecRoots().stream().map { root -> CodecSource(root, setOf()) }.toList())
@@ -92,78 +86,64 @@ class GenerateCodecIntention : CodecBuilderIntention() {
         notificationGroup.createNotification(text, type).notify(project)
     }
 
-    private fun generateForClass(project: Project, target: PsiClass, source: PsiClass): PsiField {
-        val constructors = target.constructors
-
-         val factories = target.methods.filter {
-            it.hasModifier(JvmModifier.STATIC) && PsiTypesUtil.getPsiClass(it.returnType) == target
+    private fun generateForClass(project: Project, target: PsiClass, source: PsiClass, sourceProcessor: SourceProcessor<out PsiElement, out PsiElement>): String {
+        val constructors = constructors(target)
+        val factories = allMethods(target).filter {
+            it.isStatic && PsiTypesUtil.getPsiClass(it.returnType) == target
         }
-        val allConstructors = (constructors + factories).sortedByDescending { it.parameterList.parametersCount }
-        val constructorMembers = allConstructors.map { toMembers(project, it, target, source) }
-        val candidates = mutableListOf<List<Member>>()
-        if (target.isRecord) {
-            candidates.add(target.recordComponents.map { it.toMember(project, target, source) })
+        val allConstructors = (constructors + factories).sortedByDescending { it.parameters.count()}
+        val candidates = allConstructors.map { Pair(it.name, toMembers(project, it, target, source, sourceProcessor)) }
+        val record = SourceProcessor.sourceProcessors
+            .mapNotNull {
+                sourceProcessor.findRecordConstructor(target, project, source, ::getCodec)
+            }
+            .firstOrNull()
+        if (record != null) {
+            return generateMember(project, target, record.first, record.second, sourceProcessor)
         }
-        candidates.addAll(constructorMembers)
         if (candidates.isEmpty()) {
-            return generateUnitCodec(project, target);
+            return generateUnitCodec(project, target, sourceProcessor);
         }
-        candidates.sortBy { it.size } // sort this to prefer constructors with less parameters if they are missing the same amount of codecs/getters or to find the shorter valid codec
+        candidates.sortedBy { it.second.size } // sort this to prefer constructors with less parameters if they are missing the same amount of codecs/getters or to find the shorter valid codec
         val candidate = candidates.minByOrNull { candidate ->
-            candidate.sumOf { member -> ERROR_CODECS.count { member.codec.contains(it) } + (if (member.getter == MISSING_GETTER) 1 else 0) }
+            candidate.second.sumOf { member -> ERROR_CODECS.count { member.codec.contains(it) } + (if (member.getter == MISSING_GETTER) 1 else 0) }
         } ?: throw IncorrectOperationException()
-        if (candidate.isEmpty()) {
-            return generateUnitCodec(project, target)
+        return generateMember(project, target, candidate.first, candidate.second, sourceProcessor)
+    }
+
+    private fun generateMember(project: Project, target: PsiClass, constructor: String, member: List<Member>, sourceProcessor: SourceProcessor<out PsiElement, out PsiElement>): String {
+        if (member.isEmpty()) {
+            return generateUnitCodec(project, target, sourceProcessor)
         }
-        if (candidate.size <= 16) {
-            return generateRCBCodec(project, target, candidate)
+        if (member.size <= 16) {
+            return generateRCBCodec(project, target, member, sourceProcessor, constructor)
         } else {
             notify("more then 16 elements in codec, 16 elements are the maximum", NotificationType.ERROR, project)
+            throw IncorrectOperationException()
         }
-        throw IncorrectOperationException()
     }
 
-    private fun toMembers(project: Project, constructor: PsiMethod, target: PsiClass, source: PsiClass): List<Member> {
+    public fun toMembers(project: Project, constructor: Method, target: PsiClass, source: PsiClass, sourceProcessor: SourceProcessor<out PsiElement, out PsiElement>): List<Member> {
 
-        val getters = target.allMethods.filter {
-            it.returnType != PsiPrimitiveType.VOID && it.parameterList.isEmpty
+        val getters = allMethods(target).filter {
+            it.returnType != PsiPrimitiveType.VOID && it.parameters.isEmpty()
         }.sortedBy {
-            it.name.startsWith("get") && !it.isDeprecated
+            (it.name.startsWith("get") || it.name.startsWith("is"))&& !it.isDeprecated
         }
-        return constructor.parameterList.parameters.map { parameter ->
+        return constructor.parameters.map { parameter ->
             parameter.toMember(project,
                     getters.find { it.returnType == parameter.type && (it.name == parameter.name || it.name == "get${parameter.name.capitalize()}") },
-                    target.findFieldByName(parameter.name, true), target, source)
+                    target.findFieldByName(parameter.name, true), target, source, sourceProcessor)
         }
     }
 
-    private fun generateUnitCodec(project: Project, clazz: PsiClass): PsiField {
-        return createCodec(project, clazz, "com.mojang.serialization.Codec.unit(${clazz.name}::new)")
+    private fun generateUnitCodec(project: Project, clazz: PsiClass, sourceProcessor: SourceProcessor<out PsiElement, out PsiElement>): String {
+
+        return sourceProcessor.generateUnitCodec(clazz)
     }
 
-    private fun generateRCBCodec(project: Project, clazz: PsiClass, members: List<Member>): PsiField {
-        val expression = members.joinToString(",", "com.mojang.serialization.codecs.RecordCodecBuilder.create(inst -> inst.group(", ").apply(inst, ${clazz.qualifiedName}::new))")
-        return createCodec(project, clazz, expression)
-    }
-
-    private fun createCodec(project: Project, clazz: PsiClass, codecExpression: String): PsiField {
-        val javaPsiFacade = JavaPsiFacade.getInstance(project)
-        val elementFactory = javaPsiFacade.elementFactory
-
-        val allScope = GlobalSearchScope.allScope(project)
-        val codecClazz = javaPsiFacade.findClass("com.mojang.serialization.Codec", allScope)!!
-
-        val clazzType = elementFactory.createType(clazz)
-        val codecType = elementFactory.createType(codecClazz, PsiSubstitutor.EMPTY.putAll(codecClazz, arrayOf(clazzType)))
-
-        val field = elementFactory.createField("CODEC", codecType)
-        PsiUtil.setModifierProperty(field, PsiModifier.PUBLIC, true)
-        PsiUtil.setModifierProperty(field, PsiModifier.STATIC, true)
-        PsiUtil.setModifierProperty(field, PsiModifier.FINAL, true)
-        val initializer = elementFactory.createExpressionFromText(codecExpression, field)
-        field.initializer = initializer
-
-        return field
+    private fun generateRCBCodec(project: Project, clazz: PsiClass, members: List<Member>, sourceProcessor: SourceProcessor<out PsiElement, out PsiElement>, constructor: String): String {
+        return sourceProcessor.generateRCBCodec(clazz, members, constructor)
     }
 
     private fun getCodec(project: Project, type: PsiType, source: PsiClass): String {
@@ -181,14 +161,14 @@ class GenerateCodecIntention : CodecBuilderIntention() {
 
     @Suppress("UnstableApiUsage")
     private fun getPrimitiveCodec(kind: JvmPrimitiveTypeKind) = when (kind) {
-        JvmPrimitiveTypeKind.BOOLEAN -> "com.mojang.serialization.Codec.BOOL"
-        JvmPrimitiveTypeKind.BYTE -> "com.mojang.serialization.Codec.BYTE"
-        JvmPrimitiveTypeKind.SHORT -> "com.mojang.serialization.Codec.SHORT"
-        JvmPrimitiveTypeKind.INT -> "com.mojang.serialization.Codec.INT"
-        JvmPrimitiveTypeKind.LONG -> "com.mojang.serialization.Codec.LONG"
-        JvmPrimitiveTypeKind.FLOAT -> "com.mojang.serialization.Codec.FLOAT"
-        JvmPrimitiveTypeKind.DOUBLE -> "com.mojang.serialization.Codec.DOUBLE"
-        JvmPrimitiveTypeKind.CHAR -> "com.mojang.serialization.Codec.STRING.comapFlatMap(s -> s.length() != 1 ? com.mojang.serialization.DataResult.error(() -> \"'\" + s + \"' is an invalid symbol (must be 1 character only).\") : com.mojang.serialization.DataResult.success(s.charAt(0)), String::valueOf)"
+        JvmPrimitiveTypeKind.BOOLEAN -> "$CODEC_FQN.BOOL"
+        JvmPrimitiveTypeKind.BYTE -> "$CODEC_FQN.BYTE"
+        JvmPrimitiveTypeKind.SHORT -> "$CODEC_FQN.SHORT"
+        JvmPrimitiveTypeKind.INT -> "$CODEC_FQN.INT"
+        JvmPrimitiveTypeKind.LONG -> "$CODEC_FQN.LONG"
+        JvmPrimitiveTypeKind.FLOAT -> "$CODEC_FQN.FLOAT"
+        JvmPrimitiveTypeKind.DOUBLE -> "$CODEC_FQN.DOUBLE"
+        JvmPrimitiveTypeKind.CHAR -> "$CODEC_FQN.STRING.comapFlatMap(s -> s.length() != 1 ? com.mojang.serialization.DataResult.error(() -> \"'\" + s + \"' is an invalid symbol (must be 1 character only).\") : com.mojang.serialization.DataResult.success(s.charAt(0)), String::valueOf)"
         else -> UNKNOWN_PRIMITIVE_CODEC
     }
 
@@ -196,7 +176,7 @@ class GenerateCodecIntention : CodecBuilderIntention() {
         val clazz = type.resolve() ?: return UNKNOWN_CLASS_CODEC
         when (clazz.qualifiedName) {
             null -> return UNKNOWN_CLASS_CODEC
-            "java.lang.String" -> return "com.mojang.serialization.Codec.STRING"
+            "java.lang.String" -> return "$CODEC_FQN.STRING"
             "java.util.Optional" -> return getCodec(project, type.parameters.first(), source) + OPTIONAL_MARKER
             "java.util.OptionalInt" -> return getPrimitiveCodec(PsiType.INT) + OPTIONAL_MARKER
             "java.util.OptionalLong" -> return getPrimitiveCodec(PsiType.LONG) + OPTIONAL_MARKER
@@ -252,21 +232,21 @@ class GenerateCodecIntention : CodecBuilderIntention() {
         val (first, second) = type.parameters
         val firstCodec = getCodec(project, first, source)
         val secondCodec = getCodec(project, second, source)
-        return "com.mojang.serialization.Codec.pair($firstCodec, $secondCodec)"
+        return "$CODEC_FQN.pair($firstCodec, $secondCodec)"
     }
 
     private fun getEitherCodec(type: PsiClassType, project: Project, source: PsiClass): String {
         val (first, second) = type.parameters
         val firstCodec = getCodec(project, first, source)
         val secondCodec = getCodec(project, second, source)
-        return "com.mojang.serialization.Codec.either($firstCodec, $secondCodec)"
+        return "$CODEC_FQN.either($firstCodec, $secondCodec)"
     }
 
     private fun getMapCodec(type: PsiClassType, project: Project, source: PsiClass): String {
         val (first, second) = type.parameters
         val firstCodec = getCodec(project, first, source)
         val secondCodec = getCodec(project, second, source)
-        return "com.mojang.serialization.Codec.unboundedMap($firstCodec, $secondCodec)"
+        return "$CODEC_FQN.unboundedMap($firstCodec, $secondCodec)"
     }
 
     private fun getSetCodec(type: PsiClassType, project: Project, source: PsiClass): String {
@@ -275,7 +255,7 @@ class GenerateCodecIntention : CodecBuilderIntention() {
     }
 
     private fun getEnumCodec(type: PsiClassType): String {
-        return "com.mojang.serialization.Codec.STRING.xmap(str -> Objects.requireNonNull(" + type.name + ".valueOf(str)), " + type.name + "::name)"
+        return "$CODEC_FQN.STRING.xmap(str -> Objects.requireNonNull(" + type.name + ".valueOf(str)), " + type.name + "::name)"
     }
 
     @Suppress("UnstableApiUsage")
@@ -328,32 +308,22 @@ class GenerateCodecIntention : CodecBuilderIntention() {
         return registryType == targetRegistryType
     }
 
-    private fun PsiRecordComponent.toMember(project: Project, clazz: PsiClass, source: PsiClass): Member {
-        val getter = "${clazz.qualifiedName}::$name"
-        val codec = getCodec(project, type, source)
-        val optional = codec.endsWith(OPTIONAL_MARKER)
-        if (codec.indexOf(OPTIONAL_MARKER) != codec.lastIndexOf(OPTIONAL_MARKER)) {
-            throw IncorrectOperationException("Optional in unexpected place")
-        }
-        val default: String? = null
-        return Member(codec.replace(OPTIONAL_MARKER + "", ""), name!!, optional, default, getter)
-    }
 
-    private fun PsiParameter.toMember(project: Project, getter: PsiMethod?, fieldForGetter: PsiField?, clazz: PsiClass, source: PsiClass): Member {
+
+    private fun Parameter.toMember(project: Project, getter: Method?, fieldForGetter: PsiField?, clazz: PsiClass, source: PsiClass, sourceProcessor: SourceProcessor<out PsiElement, out PsiElement>): Member {
         val codec = getCodec(project, type, source)
         val optional = codec.endsWith(OPTIONAL_MARKER)
         if (codec.indexOf(OPTIONAL_MARKER) != codec.lastIndexOf(OPTIONAL_MARKER)) {
             throw IncorrectOperationException("Optional in unexpected place")
         }
-        val default: String? = null
         var getterString = MISSING_GETTER
         if (fieldForGetter != null && PsiUtil.isMemberAccessibleAt(fieldForGetter, source)) {
-            getterString = "obj -> obj.${fieldForGetter.name}"
+            getterString = sourceProcessor.generateGetterLambdaForField(fieldForGetter)
         }
         if (getter != null) {
-            getterString = clazz.qualifiedName + "::" +getter.name
+            getterString = "(${clazz.qualifiedName}::${getter.name})"
         }
-        return Member(codec.replace(OPTIONAL_MARKER + "", ""), name, optional, default, getterString)
+        return Member(codec.replace(OPTIONAL_MARKER + "", ""), name, optional, getterString)
     }
 
     private fun String.capitalize(): String {
