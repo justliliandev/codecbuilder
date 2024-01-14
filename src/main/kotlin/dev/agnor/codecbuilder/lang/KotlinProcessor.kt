@@ -92,7 +92,7 @@ class KotlinProcessor: SourceProcessor<KtClass, KtImportDirective>() {
             if (origin is KtClass) {
                 runWriteAction {
                     try {
-                        val property = psiFactory.createAnalyzableProperty("val CODEC = $codecExpression", file)
+                        val property = createProperty(psiFactory, "val CODEC = $codecExpression", file)
                         origin.add(property)
                         ShortenReferences.DEFAULT.process(origin)
                     } catch (e: Exception) {
@@ -110,5 +110,10 @@ class KotlinProcessor: SourceProcessor<KtClass, KtImportDirective>() {
     override fun classOfImport(import: KtImportDirective): String? {
 
         return import.importedFqName?.asString()
+    }
+
+    private fun createProperty(factory: KtPsiFactory, text: String, fileContext: PsiFile): KtProperty {
+        val file: KtFile = factory.createAnalyzableFile("dummy.kt", text, fileContext)
+        return file.declarations.first() as KtProperty
     }
 }
